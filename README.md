@@ -21,7 +21,7 @@ Native macOS app for searching Northwoods' production media vault. Features a da
 
 ## Installation
 
-1. Download `VaultSearch-v1.0.0-alpha-aarch64.zip` from [Releases](https://github.com/NorthwoodsCommunityChurch/avl-vault-search/releases)
+1. Download the latest `VaultSearch-...-aarch64.zip` from [Releases](https://github.com/NorthwoodsCommunityChurch/avl-vault-search/releases)
 2. Extract the zip
 3. Move `VaultSearch.app` to Applications
 4. Try to open it (macOS will block it)
@@ -30,7 +30,7 @@ Native macOS app for searching Northwoods' production media vault. Features a da
 
 ## Usage
 
-1. Make sure the Mac Pro search API is running (`http://10.10.11.173:8081/health`)
+1. Make sure the Mac Pro search API is running (check `/health` on port 8081)
 2. Open Vault Search
 3. Type keywords in the search bar (e.g., "sunset", "easter", "worship")
 4. Browse results in the thumbnail grid
