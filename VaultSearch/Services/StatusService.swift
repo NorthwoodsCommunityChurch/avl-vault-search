@@ -118,6 +118,7 @@ class StatusService {
     ]
     var indexer = IndexerCounts()
     var scanner = ScannerStatus()
+    var workerStatus: WorkerStatusResponse?
 
     private let host = "10.10.11.157"
     private let indexerPort = 8081
@@ -149,7 +150,8 @@ class StatusService {
     private func fetchAll() async {
         async let gpuResults = fetchGPUServers()
         async let indexerResult = fetchIndexer()
-        var (gpus, counts) = await (gpuResults, indexerResult)
+        async let workerResult = fetchWorkerStatus()
+        var (gpus, counts, workers) = await (gpuResults, indexerResult, workerResult)
 
         // Port 8081 is the gate — if /status is unreachable, nothing on the server
         // is reachable from this Mac. Mark every GPU server offline regardless of
@@ -175,6 +177,13 @@ class StatusService {
             if let (counts, scan) = counts {
                 self.indexer = counts
                 self.scanner = scan
+            }
+            // Keep last successful workerStatus on transient failures.
+            // But if the server is fully offline (counts == nil), clear it.
+            if workers != nil {
+                self.workerStatus = workers
+            } else if counts == nil {
+                self.workerStatus = nil
             }
         }
     }
@@ -238,6 +247,15 @@ class StatusService {
             }
 
             return (counts, scan)
+        } catch { return nil }
+    }
+
+    private func fetchWorkerStatus() async -> WorkerStatusResponse? {
+        guard let url = URL(string: "http://\(host):\(indexerPort)/worker-status") else { return nil }
+        do {
+            let (data, resp) = try await session.data(from: url)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return try JSONDecoder().decode(WorkerStatusResponse.self, from: data)
         } catch { return nil }
     }
 }

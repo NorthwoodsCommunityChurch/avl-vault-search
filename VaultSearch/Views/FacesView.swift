@@ -252,6 +252,13 @@ struct FacesView: View {
                                                         try await service.renamePerson(personId: personId, name: name)
                                                     }
                                                 }
+                                            },
+                                            onDelete: {
+                                                Task {
+                                                    await runAction("Removing name...") {
+                                                        try await service.unnameCluster(clusterId: cluster.clusterId)
+                                                    }
+                                                }
                                             }
                                         )
                                     }

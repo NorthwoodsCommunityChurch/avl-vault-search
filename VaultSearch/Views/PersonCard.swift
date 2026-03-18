@@ -5,10 +5,12 @@ struct PersonCard: View {
     let isSelected: Bool
     let onTap: () -> Void
     let onRename: (String) -> Void
+    var onDelete: (() -> Void)? = nil
 
     @State private var showingPreview = false
     @State private var isEditing = false
     @State private var editText = ""
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -34,7 +36,6 @@ struct PersonCard: View {
                 Circle()
                     .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 3)
             )
-            .onTapGesture { showingPreview = true }
             .popover(isPresented: $showingPreview, arrowEdge: .bottom) {
                 FacePreviewPopover(cluster: cluster)
             }
@@ -101,7 +102,35 @@ struct PersonCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
         )
-        .onTapGesture { onTap() }
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.shift) {
+                onTap()  // Shift-click = toggle selection for merge
+            } else {
+                showingPreview = true  // Regular click = show face popover
+            }
+        }
+        .contextMenu {
+            Button {
+                editText = cluster.personName ?? ""
+                isEditing = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("Delete Person", systemImage: "trash")
+            }
+        }
+        .alert("Delete \(cluster.personName ?? "this person")?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                onDelete?()
+            }
+        } message: {
+            Text("This removes the name. All \(cluster.faceCount) faces will go back to unnamed clusters.")
+        }
     }
 
     private func submitRename() {

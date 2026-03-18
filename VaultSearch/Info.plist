@@ -18,8 +18,14 @@
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSAllowsLocalNetworking</key>
+        <key>NSAllowsArbitraryLoads</key>
         <true/>
     </dict>
+    <key>SUFeedURL</key>
+    <string>https://northwoodscommunitychurch.github.io/app-updates/appcast-vaultsearch.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>VIMxKZmmRokdMcHK5d3QU4+qHgBglmkVFP5aAVvxgqM=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

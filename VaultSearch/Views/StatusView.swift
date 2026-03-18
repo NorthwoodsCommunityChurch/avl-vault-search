@@ -3,54 +3,85 @@ import SwiftUI
 struct StatusView: View {
     @State private var service = StatusService()
 
+    private var cpuWorkers: [WorkerInfo] {
+        guard let ws = service.workerStatus else { return [] }
+        var workers = [
+            WorkerInfo(
+                name: "Face",
+                isActive: ws.cpuWorkers.faceDetect.processing,
+                currentTask: ws.cpuWorkers.faceDetect.currentTask,
+                indexerQueue: ws.cpuWorkers.faceDetect.queue.crawler,
+                apiQueue: ws.cpuWorkers.faceDetect.queue.api
+            ),
+            WorkerInfo(
+                name: "Scene",
+                isActive: ws.cpuWorkers.sceneDetect.active > 0,
+                currentTask: nil,
+                indexerQueue: ws.cpuWorkers.sceneDetect.queue.crawler,
+                apiQueue: ws.cpuWorkers.sceneDetect.queue.api,
+                detail: "\(ws.cpuWorkers.sceneDetect.active)/\(ws.cpuWorkers.sceneDetect.workers) workers"
+            ),
+        ]
+        if let ala = ws.cpuWorkers.ala {
+            workers.append(WorkerInfo(
+                name: "ALA",
+                isActive: ala.processing,
+                currentTask: ala.currentTask,
+                indexerQueue: 0,
+                apiQueue: ala.queue.api
+            ))
+        }
+        return workers
+    }
+
+    private var gpuWorkers: [WorkerInfo] {
+        guard let ws = service.workerStatus else {
+            // Fallback: use old GPU server data
+            return service.servers.map { s in
+                WorkerInfo(
+                    name: s.name,
+                    isActive: s.isProcessing,
+                    isOnline: s.isOnline,
+                    currentTask: nil,
+                    indexerQueue: 0,
+                    apiQueue: 0,
+                    detail: s.model
+                )
+            }
+        }
+        return ws.gpus.map { gpu in
+            WorkerInfo(
+                name: gpu.name,
+                isActive: gpu.processing,
+                isOnline: gpu.online,
+                currentTask: gpu.currentTask,
+                indexerQueue: gpu.queue.crawler,
+                apiQueue: gpu.queue.api,
+                detail: gpu.model,
+                orchestratorState: gpu.orchestratorState
+            )
+        }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 20) {
 
-                // MARK: GPU Servers
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("GPU Servers")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                        .tracking(0.8)
+                // MARK: CPU Workers
+                WorkerSection(title: "CPU", icon: "cpu", workers: cpuWorkers)
 
-                    VStack(spacing: 5) {
-                        ForEach(service.servers) { server in
-                            GPUServerRow(server: server)
-                        }
-                    }
-                }
+                // MARK: GPU Workers
+                WorkerSection(title: "GPU", icon: "rectangle.stack.fill", workers: gpuWorkers)
 
-                Divider()
+                // MARK: Crawler
+                CrawlerCard(scanner: service.scanner)
 
-                // MARK: Scanner
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Scanner")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                        .tracking(0.8)
-
-                    ScannerCard(scanner: service.scanner)
-                }
-
-                Divider()
-
-                // MARK: Media Indexer
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Media Indexer")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .textCase(.uppercase)
-                        .tracking(0.8)
-
-                    IndexerStatusCard(counts: service.indexer)
-                }
+                // MARK: Overall Progress
+                IndexerSummaryCard(counts: service.indexer)
 
                 Spacer()
             }
-            .padding(16)
+            .padding(20)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { service.startPolling() }
@@ -58,99 +89,323 @@ struct StatusView: View {
     }
 }
 
-// MARK: - GPU Server Row
+// MARK: - Data Model
 
-struct GPUServerRow: View {
-    let server: GPUServerStatus
+struct WorkerInfo: Identifiable {
+    let id = UUID()
+    let name: String
+    var isActive: Bool
+    var isOnline: Bool = true
+    var currentTask: CurrentTaskInfo?
+    var indexerQueue: Int
+    var apiQueue: Int
+    var detail: String? = nil
+    var orchestratorState: String? = nil  // Pro 580X only
 
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(server.isOnline ? Color.green : Color(nsColor: .systemGray))
-                    .frame(width: 7, height: 7)
-                    .shadow(color: server.isOnline ? .green.opacity(0.6) : .clear, radius: 4)
+    /// Which queue the worker is currently pulling from ("crawler" or "api"), or nil if idle
+    var activeSource: String? {
+        currentTask?.source
+    }
 
-                Text(server.name)
-                    .font(.system(size: 12, weight: .medium))
+    var isOrchestrated: Bool { orchestratorState != nil }
 
-                Text(server.model)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-
-                Spacer()
-
-                Text(statusLabel(server))
-                    .font(.system(size: 11))
-                    .foregroundColor(statusColor(server))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-
-            ActivityBar(isOnline: server.isOnline, isProcessing: server.isProcessing)
-                .frame(height: 2)
+    var orchestratorLabel: String? {
+        guard let state = orchestratorState else { return nil }
+        switch state {
+        case "gemma_ready": return "Gemma Ready"
+        case "gemma_loading": return "Loading Gemma..."
+        case "whisper_busy": return "Transcribing"
+        case "whisper_loading": return "Loading Whisper..."
+        case "idle": return "Idle"
+        default: return state
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private func statusLabel(_ s: GPUServerStatus) -> String {
-        if !s.isOnline { return "Offline" }
-        return s.isProcessing ? "Processing" : "Idle"
-    }
-
-    private func statusColor(_ s: GPUServerStatus) -> Color {
-        if !s.isOnline { return .secondary }
-        return s.isProcessing ? .blue : Color(nsColor: .systemGray)
     }
 }
 
-// MARK: - Activity Bar
+// MARK: - Worker Section (CPU or GPU row)
 
-struct ActivityBar: View {
-    let isOnline: Bool
-    let isProcessing: Bool
-    @State private var phase: CGFloat = 0
+struct WorkerSection: View {
+    let title: String
+    let icon: String
+    let workers: [WorkerInfo]
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                // Track
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color(nsColor: .separatorColor))
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(title: title, icon: icon)
 
-                // Fill
-                if isOnline {
-                    if isProcessing {
-                        // Animated shimmer for processing
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(
-                                LinearGradient(
-                                    colors: [.blue.opacity(0.3), .blue, .blue.opacity(0.3)],
-                                    startPoint: .init(x: phase - 0.5, y: 0),
-                                    endPoint: .init(x: phase + 0.5, y: 0)
-                                )
-                            )
-                            .onAppear {
-                                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                                    phase = 1.5
-                                }
-                            }
-                    } else {
-                        // Solid dim fill for idle
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color(nsColor: .systemGray).opacity(0.3))
-                            .frame(width: geo.size.width * 0.15)
-                    }
+            HStack(alignment: .top, spacing: 16) {
+                ForEach(workers) { worker in
+                    WorkerCard(worker: worker)
                 }
             }
         }
     }
 }
 
-// MARK: - Scanner Card
+// MARK: - Section Label
 
-struct ScannerCard: View {
+struct SectionLabel: View {
+    let title: String
+    let icon: String
+
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.secondary)
+    }
+}
+
+// MARK: - Worker Status Indicator
+
+struct WorkerStatusIndicator: View {
+    let isOnline: Bool
+    let isActive: Bool
+    @State private var isSpinning = false
+
+    var body: some View {
+        if !isOnline {
+            Circle()
+                .fill(Color(nsColor: .systemGray))
+                .frame(width: 10, height: 10)
+        } else if isActive {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.green)
+                .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                .animation(.linear(duration: 1.5).repeatForever(autoreverses: false), value: isSpinning)
+                .onAppear { isSpinning = true }
+                .frame(width: 10, height: 10)
+        } else {
+            Circle()
+                .fill(Color(nsColor: .systemGray).opacity(0.4))
+                .frame(width: 10, height: 10)
+        }
+    }
+}
+
+// MARK: - Worker Card
+
+struct WorkerCard: View {
+    let worker: WorkerInfo
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top section: name, detail, task — fixed height
+            VStack(alignment: .leading, spacing: 4) {
+                // Worker name + status indicator
+                HStack(spacing: 6) {
+                    WorkerStatusIndicator(isOnline: worker.isOnline, isActive: worker.isActive)
+
+                    Text(worker.name)
+                        .font(.system(size: 13, weight: .semibold))
+
+                    if !worker.isOnline {
+                        Text("Offline")
+                            .font(.system(size: 10))
+                            .foregroundColor(.red.opacity(0.8))
+                    }
+                }
+
+                // Detail text (model name, worker count) — reserve line even if empty
+                if worker.orchestratorLabel != nil {
+                    HStack(spacing: 4) {
+                        Text(worker.detail ?? "")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        OrchestratorBadge(state: worker.orchestratorState ?? "")
+                    }
+                } else {
+                    Text(worker.detail ?? " ")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .opacity(worker.detail != nil ? 1 : 0)
+                }
+
+                // Current task — fixed height, hidden content when no task
+                HStack(spacing: 4) {
+                    if let task = worker.currentTask {
+                        SourceBadge(source: task.source)
+                        Text(task.file)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text(" ")
+                            .font(.system(size: 10))
+                    }
+                }
+                .frame(height: 16, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer().frame(height: 10)
+
+            // Bracket visualization: Worker → splits to Indexer and API
+            WorkerBracketView(
+                indexerCount: worker.indexerQueue,
+                apiCount: worker.apiQueue,
+                activeSource: worker.activeSource
+            )
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - Worker Bracket View
+// Shows a bracket from the worker splitting down to Indexer and API queue counts.
+// The active path (based on currentTask.source) is highlighted.
+
+struct WorkerBracketView: View {
+    let indexerCount: Int
+    let apiCount: Int
+    let activeSource: String?  // "crawler" = indexer active, "api" = api active, nil = idle
+
+    private var indexerActive: Bool { activeSource == "crawler" }
+    private var apiActive: Bool { activeSource == "api" }
+
+    private var indexerColor: Color {
+        if indexerActive { return .green }
+        return indexerCount > 0 ? .secondary : .secondary.opacity(0.3)
+    }
+
+    private var apiColor: Color {
+        if apiActive { return .blue }
+        return apiCount > 0 ? .secondary : .secondary.opacity(0.3)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // The bracket shape connecting worker to queues
+            SplitBracketShape(activeSource: activeSource)
+                .frame(height: 20)
+
+            // Queue labels and counts
+            HStack(spacing: 0) {
+                // Indexer column
+                VStack(spacing: 2) {
+                    Text(formatCount(indexerCount))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(indexerActive ? .green : (indexerCount > 0 ? .secondary : .secondary.opacity(0.3)))
+
+                    Text("Indexer")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(indexerColor)
+                }
+                .frame(maxWidth: .infinity)
+
+                // API column
+                VStack(spacing: 2) {
+                    Text(formatCount(apiCount))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(apiActive ? .blue : (apiCount > 0 ? .secondary : .secondary.opacity(0.3)))
+
+                    Text("API")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(apiColor)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func formatCount(_ n: Int) -> String {
+        if n >= 100_000 {
+            return String(format: "%.0fK", Double(n) / 1000.0)
+        }
+        if n >= 1000 {
+            return String(format: "%.1fK", Double(n) / 1000.0)
+        }
+        return "\(n)"
+    }
+}
+
+// MARK: - Split Bracket Shape
+// Draws a bracket from center top splitting down to left and right legs.
+//
+//        │           ← stem (from worker above)
+//   ┌────┴────┐      ← horizontal bar
+//   │         │      ← left and right legs
+//
+// The active side is drawn with a highlighted color.
+
+struct SplitBracketShape: View {
+    let activeSource: String?  // "crawler" or "api" or nil
+
+    private var leftActive: Bool { activeSource == "crawler" }
+    private var rightActive: Bool { activeSource == "api" }
+
+    private var leftColor: Color {
+        leftActive ? .green : Color.secondary.opacity(0.2)
+    }
+    private var rightColor: Color {
+        rightActive ? .blue : Color.secondary.opacity(0.2)
+    }
+    private var stemColor: Color {
+        if leftActive { return .green }
+        if rightActive { return .blue }
+        return Color.secondary.opacity(0.2)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let midX = geo.size.width / 2
+            let leftX = geo.size.width * 0.25
+            let rightX = geo.size.width * 0.75
+            let stemBottom: CGFloat = 6
+            let barY: CGFloat = 6
+            let legBottom = geo.size.height
+
+            // Stem from top center down to bar
+            Path { p in
+                p.move(to: CGPoint(x: midX, y: 0))
+                p.addLine(to: CGPoint(x: midX, y: stemBottom))
+            }
+            .stroke(stemColor, lineWidth: leftActive || rightActive ? 2 : 1)
+
+            // Left half of bar + left leg
+            Path { p in
+                p.move(to: CGPoint(x: midX, y: barY))
+                p.addLine(to: CGPoint(x: leftX, y: barY))
+                p.addLine(to: CGPoint(x: leftX, y: legBottom))
+            }
+            .stroke(leftColor, lineWidth: leftActive ? 2 : 1)
+
+            // Right half of bar + right leg
+            Path { p in
+                p.move(to: CGPoint(x: midX, y: barY))
+                p.addLine(to: CGPoint(x: rightX, y: barY))
+                p.addLine(to: CGPoint(x: rightX, y: legBottom))
+            }
+            .stroke(rightColor, lineWidth: rightActive ? 2 : 1)
+        }
+    }
+}
+
+// MARK: - Source Badge
+
+struct SourceBadge: View {
+    let source: String
+
+    var body: some View {
+        Text(source == "api" ? "API" : "Crawler")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(source == "api" ? .white : .secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(source == "api" ? Color.blue : Color(nsColor: .systemGray).opacity(0.3))
+            )
+    }
+}
+
+// MARK: - Crawler Card
+
+struct CrawlerCard: View {
     let scanner: ScannerStatus
 
     private var stateLabel: String {
@@ -171,78 +426,62 @@ struct ScannerCard: View {
         }
     }
 
-    private var subtitleText: String {
+    private var subtitle: String {
         switch scanner.state {
         case "scanning":
             if !scanner.currentFolder.isEmpty {
                 return URL(fileURLWithPath: scanner.currentFolder).lastPathComponent
             }
             return "\(scanner.filesScanned) files scanned"
-        case "processing":
-            return "Running AI descriptions on pending files"
         case "sleeping":
             if let secs = scanner.nextScanIn {
                 if secs < 60 { return "Next scan in \(secs)s" }
-                return "Next scan in \(secs / 60)m \(secs % 60)s"
+                return "Next scan in \(secs / 60)m"
             }
             return ""
         default:
-            return "Watching vault for changes"
+            return ""
         }
-    }
-
-    private var rightLabel: String {
-        if scanner.state == "scanning" && scanner.filesNew > 0 {
-            return "\(scanner.filesNew) new"
-        }
-        if scanner.state == "scanning" && scanner.filesScanned > 0 {
-            return "\(scanner.filesScanned) scanned"
-        }
-        return ""
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(title: "Crawler", icon: "folder.badge.gearshape")
+
             HStack(spacing: 10) {
                 Circle()
                     .fill(stateColor)
                     .frame(width: 7, height: 7)
-                    .shadow(color: scanner.state == "scanning" ? Color.green.opacity(0.6) : .clear, radius: 4)
+                    .shadow(color: scanner.state == "scanning" ? .green.opacity(0.5) : .clear, radius: 3)
 
                 Text(stateLabel)
                     .font(.system(size: 12, weight: .medium))
 
-                Text(subtitleText)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
 
                 Spacer()
 
-                if !rightLabel.isEmpty {
-                    Text(rightLabel)
+                if scanner.state == "scanning" && scanner.filesNew > 0 {
+                    Text("\(scanner.filesNew) new")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-
-            ActivityBar(
-                isOnline: scanner.state != "idle",
-                isProcessing: scanner.state == "scanning" || scanner.state == "processing"
-            )
-            .frame(height: 2)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 }
 
-// MARK: - Indexer Status Card
+// MARK: - Indexer Summary Card
 
-struct IndexerStatusCard: View {
+struct IndexerSummaryCard: View {
     let counts: IndexerCounts
 
     private let typeRows: [(key: String, label: String, icon: String, color: Color)] = [
@@ -260,94 +499,70 @@ struct IndexerStatusCard: View {
         NumberFormatter.localizedString(from: NSNumber(value: counts.total), number: .decimal)
     }
 
-    private var lastScannedText: String {
-        guard let date = counts.lastUpdated else { return "—" }
-        let secs = Int(-date.timeIntervalSinceNow)
-        if secs < 60 { return "just now" }
-        if secs < 3600 { return "\(secs / 60)m ago" }
-        return "\(secs / 3600)h ago"
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Counts row
-            HStack(alignment: .firstTextBaseline) {
-                Text(formattedIndexed)
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                Text("/ \(formattedTotal) files indexed")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(String(format: "%.0f%%", counts.progress * 100))
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .foregroundColor(.blue)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(title: "Overall Progress", icon: "chart.bar.fill")
 
-            // Overall progress bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(nsColor: .separatorColor))
-
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.blue.opacity(0.7), Color.blue],
-                                startPoint: .leading, endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geo.size.width * counts.progress)
-                        .animation(.easeInOut(duration: 0.6), value: counts.progress)
-                }
-            }
-            .frame(height: 5)
-
-            // Detail badges
-            HStack(spacing: 14) {
-                if counts.indexing > 0 {
-                    StatBadge(value: counts.indexing, label: "in queue", color: .blue)
-                }
-                if counts.pending > 0 {
-                    StatBadge(value: counts.pending, label: "pending", color: .orange)
-                }
-                if counts.error > 0 {
-                    StatBadge(value: counts.error, label: "errors", color: .red)
-                }
-                if counts.offline > 0 {
-                    StatBadge(value: counts.offline, label: "offline", color: .secondary)
-                }
-
-                Spacer()
-
-                if counts.lastUpdated != nil {
-                    Label(lastScannedText, systemImage: "arrow.clockwise")
-                        .font(.system(size: 11))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(formattedIndexed)
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    Text("/ \(formattedTotal) files")
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f%%", counts.progress * 100))
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundColor(.blue)
                 }
-            }
 
-            // Per-type breakdown
-            if !counts.byType.isEmpty {
-                Divider()
-                    .padding(.vertical, 2)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color(nsColor: .separatorColor))
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(LinearGradient(colors: [.blue.opacity(0.7), .blue], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: geo.size.width * counts.progress)
+                            .animation(.easeInOut(duration: 0.6), value: counts.progress)
+                    }
+                }
+                .frame(height: 5)
 
-                VStack(spacing: 6) {
-                    ForEach(typeRows, id: \.key) { row in
-                        if let tc = counts.byType[row.key], tc.total > 0 {
-                            TypeProgressRow(
-                                label: row.label,
-                                icon: row.icon,
-                                color: row.color,
-                                counts: tc
-                            )
+                HStack(spacing: 14) {
+                    if counts.pending > 0 {
+                        StatBadge(value: counts.pending, label: "pending", color: .orange)
+                    }
+                    if counts.indexing > 0 {
+                        StatBadge(value: counts.indexing, label: "in queue", color: .blue)
+                    }
+                    if counts.error > 0 {
+                        StatBadge(value: counts.error, label: "errors", color: .red)
+                    }
+                }
+
+                // Per-type breakdown
+                if !counts.byType.isEmpty {
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    VStack(spacing: 6) {
+                        ForEach(typeRows, id: \.key) { row in
+                            if let tc = counts.byType[row.key], tc.total > 0 {
+                                TypeProgressRow(
+                                    label: row.label,
+                                    icon: row.icon,
+                                    color: row.color,
+                                    counts: tc
+                                )
+                            }
                         }
                     }
                 }
             }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
         }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
     }
 }
 
@@ -395,6 +610,44 @@ struct TypeProgressRow: View {
             }
             .frame(height: 3)
         }
+    }
+}
+
+// MARK: - Orchestrator Badge
+
+struct OrchestratorBadge: View {
+    let state: String
+
+    private var label: String {
+        switch state {
+        case "gemma_ready": return "Gemma Ready"
+        case "gemma_loading": return "Loading Gemma"
+        case "whisper_busy": return "Transcribing"
+        case "whisper_loading": return "Loading Whisper"
+        case "idle": return "Idle"
+        default: return state
+        }
+    }
+
+    private var color: Color {
+        switch state {
+        case "gemma_ready": return .green
+        case "whisper_busy": return .teal
+        case "gemma_loading", "whisper_loading": return .yellow
+        default: return Color(nsColor: .systemGray)
+        }
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color.opacity(0.15))
+            )
     }
 }
 

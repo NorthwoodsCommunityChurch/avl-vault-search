@@ -6,6 +6,11 @@ options:
     macOS: "14.0"
   xcodeVersion: "16.0"
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.0.0
+
 targets:
   VaultSearch:
     type: application
@@ -14,11 +19,13 @@ targets:
       - path: VaultSearch
         excludes:
           - Info.plist
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.northwoods.VaultSearch
-        MARKETING_VERSION: "1.0.1"
-        CURRENT_PROJECT_VERSION: 2
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: false
         INFOPLIST_FILE: VaultSearch/Info.plist
         MACOSX_DEPLOYMENT_TARGET: "14.0"

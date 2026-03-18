@@ -65,6 +65,38 @@ struct ClustersResponse: Codable {
     let clusters: [FaceCluster]
 }
 
+// MARK: - Cluster Detail (all faces, not just samples)
+
+struct ClusterDetailResponse: Codable {
+    let clusterId: Int
+    let personName: String?
+    let faceCount: Int
+    let faces: [FaceDetail]
+
+    enum CodingKeys: String, CodingKey {
+        case clusterId = "cluster_id"
+        case personName = "person_name"
+        case faceCount = "face_count"
+        case faces
+    }
+}
+
+struct FaceDetail: Codable, Identifiable {
+    let id: String
+    let thumbnailUrl: String
+    let hasThumbnail: Bool
+
+    var fullThumbnailURL: URL? {
+        URL(string: "http://10.10.11.157:8081\(thumbnailUrl)")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case thumbnailUrl = "thumbnail_url"
+        case hasThumbnail = "has_thumbnail"
+    }
+}
+
 struct DetectProgress: Codable {
     let running: Bool
     let processed: Int

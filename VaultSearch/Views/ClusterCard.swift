@@ -33,7 +33,6 @@ struct ClusterCard: View {
                 Circle()
                     .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 3)
             )
-            .onTapGesture { showingPreview = true }
             .popover(isPresented: $showingPreview, arrowEdge: .bottom) {
                 FacePreviewPopover(cluster: cluster)
             }
@@ -80,6 +79,12 @@ struct ClusterCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
         )
-        .onTapGesture { onTap() }
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.shift) {
+                onTap()  // Shift-click = toggle selection for merge
+            } else {
+                showingPreview = true  // Regular click = show face popover
+            }
+        }
     }
 }
